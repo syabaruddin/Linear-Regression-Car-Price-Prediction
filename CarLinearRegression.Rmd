@@ -1,0 +1,534 @@
+---
+title: "Linear Regression for Car Prediction"
+author: "Syabaruddin Malik"
+date: "`r format(Sys.Date(), '%B %e, %Y')`"
+output:
+  html_document:
+    df_print: paged
+    highlight: zenburn
+    theme: spacelab
+    toc: true
+    toc_float:
+      collapsed: yes
+    number_sections : true
+
+   
+
+   
+---
+
+![](C:\SyabaruddinFolder\Work\Algoritma\DATAScicourse\MachineLearning\RegressionModels\ML\regressionmodels-master/car.jpg)
+
+# Intro {.tabset}
+
+## What We'll Do
+
+We will use linear regression model using car price dataset. We want to know the relationship among variables, especially between the car price with other variables. We also want to predict the price of a new car based on the historical data. 
+
+
+
+## Business Goal
+
+A Chinese automobile company Geely Auto aspires to enter the US market by setting up their manufacturing unit there and producing cars locally to give competition to their US and European counterparts.
+
+They have contracted an automobile consulting company to understand the factors on which the pricing of cars depends. Specifically, they want to understand the factors affecting the pricing of cars in the American market, since those may be very different from the Chinese market. The company wants to know:
+
+- Which variables are significant in predicting the price of a car
+- How well those variables describe the price of a car
+
+Based on various market surveys, the consulting firm has gathered a large dataset of different types of cars across the Americal market.
+We are required to model the price of cars with the available independent variables. It will be used by the management to understand how exactly the prices vary with the independent variables. They can accordingly manipulate the design of the cars, the business strategy etc. to meet certain price levels. Further, the model will be a good way for management to understand the pricing dynamics of a new market.
+
+# Data Preparation {.tabset}
+
+## Library and Setup
+
+Before we do analysis, we need to load the required library packages.
+
+```{r message=F, warning=F}
+#untuk data wrangling
+library(tidyverse)
+
+#untuk cek asumsi model
+library(lmtest)
+library(car)
+
+#untuk menghitung error
+library(MLmetrics)
+
+#untuk visualisasi korelasi
+library(GGally)
+
+```
+
+## Import Data
+
+We need the data to do the analysis. Then, we have to load the dataset
+
+```{r}
+car_data <- read.csv("data_input/car data.csv")
+
+glimpse(car_data)
+```
+## Data Description
+
+Below are data description for each columns :
+
+- `Car_Name`: Name of the car
+- `Year`: Production Year
+- `Selling_Price`: Selling price
+- `Present_Price`: Present buying price
+- `Kms_Driven`: Kilometers driven value
+- `Fuel_Type`: Fuel type
+- `Seller_Type`: Seller Type
+- `Transmission`: Transmission Type
+- `Owner`: Ownership status (1 = yes, 0 = no)
+
+
+
+# Exploratory Data Analysis
+
+
+## Check Data Type
+
+After we check the data type of each columns, we found that some of the columns don't have the required data type. We need to change these columns' data type for us to ease the analysis process.
+
+```{r}
+df_data <- car_data %>% 
+  mutate_if(is.character,as.factor)
+```
+
+## Check Missing Value
+
+
+We have to check if there is any missing values in our data set
+
+```{r}
+colSums(is.na(df_data))
+```
+After we check, there is no missing values in the data set. 
+
+## Analysis
+
+Let us check unique values on each category
+
+First we check between Owner and Fuel Type
+
+```{r}
+table(df_data$Owner,df_data$Fuel_Type)
+```
+After we check the unique values between fuel type and Owner, we found that fuel type "CNG" and owner "3" is very rare. We will drop fuel type CNF and change Owner 3 to Owner 1.
+
+
+```{r}
+df_data <- df_data %>% 
+  mutate(Owner = ifelse(Owner == 3, yes=1,no=Owner)) %>% filter(Fuel_Type != "CNG") 
+  
+```
+
+
+Now Let us check between Owner and Seller Type
+
+```{r}
+table(df_data$Owner,df_data$Seller_Type)
+```
+No need to drop any rows and columns between Owner and Seller type
+
+Let us check between Owner and Transmission
+
+```{r}
+table(df_data$Owner,df_data$Transmission)
+```
+No need to drop any rows and columns between Owner and Transmission
+
+
+After we check Unique values on each categories, let us check corelation between numerical variables
+
+
+```{r}
+ ggcorr(df_data,label=T)
+  
+```
+
+Some variables have correlations with selling price and some variable have no correlation with selling price. let us check deeper one by one
+
+Let us check relation between km driven and selling price
+
+```{r}
+options(scipen=999)
+df_data %>% ggplot(aes(x=Kms_Driven,y=Selling_Price)) + 
+  geom_point() + geom_smooth(method="lm") + theme_bw()
+```
+There are outliers on kms_driven > 150,000 km. Let us check the curve if we drop these outliers
+
+```{r}
+df_filter <- df_data %>% 
+  filter(Kms_Driven<150000)
+
+df_filter %>% ggplot(aes(x=Kms_Driven,y=Selling_Price)) +
+  geom_point() + geom_smooth(method="lm") + theme_bw()
+
+
+```
+The correlation looks higher if we drop the outliers. We will compared later in terms of regression between filtered data and non-filtered
+
+Now let's check correlation between selling price and year
+
+```{r}
+df_filter %>% 
+  ggplot(aes(x=Year,y=Selling_Price)) + geom_point() +
+  geom_smooth(method="lm") + theme_bw()
+
+
+```
+There are correlation between Year and Selling price. The higher the year the higher the selling price.
+There are outliers on Selling price > 25 k USD in. Let us check the curve if we drop these outliers
+
+```{r}
+df_filter <- df_data %>% 
+  filter(Selling_Price<25)
+
+df_filter %>% ggplot(aes(x=Year,y=Selling_Price)) +
+  geom_point() + geom_smooth(method="lm") + theme_bw()
+
+
+```
+
+The correlation looks better between selling price and year after if we filter the data. For now, we will not used the filtered year vs selling price. We will see later if the data needs improvement.
+
+Now let us check again correlation between number variables after we filtered the dataset
+
+```{r message=FALSE, warning=F}
+ggcorr(df_filter,label=T)
+```
+
+If we look at the picture above, there is no correlation between selling price and owner, we can drop the owner column for further analysis
+
+
+# Model Fitting
+
+We will make 2 models for analysis
+- Filtered data model
+- Original model
+
+Now let us check the summary on each model 
+
+```{r}
+#model_filter
+
+model_filter <- lm(df_filter$Selling_Price~.,data=df_filter
+                   %>% select(-Car_Name) %>% select(-Owner)) 
+summary(model_filter)
+
+
+
+```
+Interpretation :
+
++ Adjusted R-Square : 87,71% => Model can explain 87,71% of the variation from selling price, the rest of the percentage can be explained by another variable that is not present in the model. 
++ If fuel type = petrol, the selling price will be decreased due to negative coefficient/estimate. 
++ If seller type = individual, the selling price will be decreased due to negative coefficient/estimate. 
++ If transmisi = manual, the selling price will be decreased due to negative coefficient/estimate.
++ The higher Km driven, the lower selling price due to negative coefficient/estimate.
+
+
+```{r}
+#model_full
+
+model_full <- lm(df_data$Selling_Price~.,data=df_data %>% select(-Car_Name))
+summary(model_full)
+```
+Interpretation:
+
++ Adjusted R-Square : 87,86% => Model can explain 87,86% of the variation from selling price, the rest of the percentage can be explained by another variable that is not present in the model. 
++ p-value from "Owner" is not significant, then we can assume that there is no influence to selling price
++ Jika fuel type = petrol, harganya akan turun karena koefision/estimate nilainya negatif.
++ If fuel type = petrol, the selling price will be decreased due to negative coefficient/estimate. 
++ If seller type = individual, the selling price will be decreased due to negative coefficient/estimate. 
++ If transmission = manual, the selling price will be decreased due to negative coefficient/estimate.
++ The higher Km driven, the lower selling price due to negative coefficient/estimate.
+
+
+Now let us determine which Variables we will use. Since the adjusted R squared from the filtered data Model is slightly the same as the original model, for further analysis we decide to go with the filtered data model since this model uses least variables.
+
+```{r}
+model_step <- step(model_filter,direction="both")
+
+```
+SInce no variable AIC value lower than AIC start, we can use all the variable (Transmission, Year, Kms_Driven, Seller_type, Fuel_type, present_price)
+
+```{r}
+summary(model_step)
+```
+
+
+# Model Evaluation
+
+## Model Performance
+
+### Performance
+
+We check the performance from our model with new data set
+
+```{r}
+car_new <- read.csv("data_input/car_test.csv")
+car_new
+```
+
+```{r}
+pred_test1 <- predict(model_filter,newdata = car_new)
+
+pred_test1
+```
+
+
+### Error Check 
+
+The performance of our model (how well our model predict the target variable) can be calculated using root mean squared error
+$$
+RMSE = \sqrt{\frac{1}{n} \sum (\hat y - y)^2}
+$$
+RMSE is better than MAE or mean absolute error, because RMSE squared the difference between the actual values and the predicted values, meaning that prediction with higher error will be penalized greatly. This metric is often used to compare two or more alternative models, even though it is harder to interpret than MAE. We can use the RMSE () functions from caret package
+
+```{r}
+
+#Root Mean Squared Error in model
+
+RMSE(model_filter$fitted.values, df_filter$Selling_Price)
+```
+
+```{r}
+
+#Root Mean Squared Error in prediction test
+
+RMSE(pred_test1, car_new$Selling_Price)
+```
+If we see RMSE result above, we can interpret in prediction test, the error of selling price is +- 1.9k USD
+
+## Assumptions
+
+### Multicolinearity
+
+Multicollinearity mean that there is a correlation between the independent variables/predictors. To check the multicollinearity, we can measure the varianec inflation factor (VIF). As a rule of thumb, a VIF value that exceeds 5 or 10 indicates a problematic amount of collinearity.
+
+
+```{r}
+vif(model_filter)
+```
+Since all of the VIF value is lower than 10, it means that our variables are all independent
+
+### Errors Normality
+
+The second assumption in linear regression is that the residuals follow normal distribution. We can easily check this by using the Saphiro-Wilk normality test or density plot
+
+```{r}
+#density ploy
+
+plot(density(model_filter$residuals))
+```
+Shapiro test hypothesis accepted : p-value >0.05
+
+```{r}
+shapiro.test(model_filter$residuals)
+```
+The plot density looks good in terms of normality however the shapiro test < 0.05. It seems the data is not big enough to be used for shapiro test.
+
+### Heteroscedacity
+
+Heterocedasticity means that the variances of the error terms are non-constant. One can identify non-constant variances in the errors from the presence of a funnel shape in the residual plot, same with the linearity one. We can use bptest to check the heteroscedacity
+
+hypothesis accepted : p-value >0.05
+
+```{r}
+
+#bptest
+
+bptest(model_filter)
+```
+
+
+The result from bptest above is p-value < 0.05, then the hypothesis is rejected. The errors are non-constant.
+
+
+```{r}
+
+#model plot check fitted values & residuals
+
+plot(model_filter$fitted.values,
+     model_filter$residuals)
+```
+
+If we check the plot above, we can see there is a presence of a funnel shape. It means that heteroscedacity is present.
+
+
+
+### Linearity
+
+
+
+```{r message=F,warning=F}
+#linearity check
+
+data.frame(prediction=model_filter$fitted.values,
+     error=model_filter$residuals) %>% 
+  ggplot(aes(prediction,error)) +
+  geom_hline(yintercept=0) +
+  geom_point() +
+  geom_smooth() +
+  theme_bw()
+  
+```
+
+From plot above, we can see the plot shaped a U curve. It means that the linearity is not present.
+  
+
+# Model Improvement
+
+## Model Performance
+
+### Tuning
+
+We have already seen that our model doesn’t satisfy some of the assumptions, including the linearity, heterocesdasticity and Errors Normality. Now we will try to fix them. To made the model more linear, we can transform some of the variables
+
+```{r message=F,warning=F}
+#Transform data target and predictors
+#Tranform numerical variables to Log10
+#Drop the outliers of selling price vs years
+
+df_filter2 <- df_data %>% 
+  filter(Kms_Driven<150000) %>% filter(Selling_Price<25) %>% 
+  select(-Owner) %>% select(-Car_Name) %>%  
+  mutate_if(~is.numeric(.), ~log10(.))
+
+df_filter2
+
+
+
+
+```
+### Performance Test
+
+Now let us make the model using our data that has been tunned and check the summary
+
+```{r}
+model_filter2 <- lm(df_filter2$Selling_Price~.,data=df_filter2)
+summary(model_filter2)
+
+```
+After we transformed our data with log10, the adjusted R-Squared is getting higher to 97.86% from 87,9% 
+
+### Error Check
+
+Now we check our tunned model with new tunned data set
+
+```{r}
+car_new2 <- car_new %>% mutate_if(~is.numeric(.), ~log10(.)) %>% 
+  select(-Owner) %>% select(-Car_Name)
+
+pred_test2 <- predict(model_filter2,newdata = car_new2)
+
+pred_test2
+
+```
+
+Now we will measure the RMSE. Since our target is transformed with ^2, we need to transform it back to  get the original price value and get a meaningful comparison to our previous model.
+
+```{r}
+# RMSE of the tunned data model
+RMSE(10^(model_filter2$fitted.values),10^(df_filter2$Selling_Price))
+```
+
+```{r}
+# RMSE of the prediction
+RMSE(10^(pred_test2),10^(car_new2$Selling_Price))
+```
+Looking at the RMSE result above ,RMSE of tunned dataset is 0.798 while the prediction dataset has RMSE of 0.818. It means that our model is fit with the prediction test. We can interpret in prediction test, the error of selling price is +- 0.818 k USD. This error is better than our model before it was tunned.
+
+## Assumptions
+
+### Multicolinearity
+
+```{r}
+vif(model_filter2)
+```
+Since all of the VIF value is lower than 10, it means that our variables from our tunned datasets are all independent
+
+### Errors Normality
+
+
+We can check by using density plot.
+
+```{r}
+#density plot
+
+plot(density(model_filter2$residuals))
+```
+
+We can see that the plot above as the normality of the residual looks good .
+
+
+### Heteroscedacity
+
+Heterocedasticity means that the variances of the error terms are non-constant. One can identify non-constant variances in the errors from the presence of a funnel shape in the residual plot, same with the linearity one. We can use bptest to check the heteroscedacity
+
+
+```{r}
+
+#model plot check fitted values & residuals
+
+plot(model_filter2$fitted.values,
+     model_filter2$residuals)
+```
+
+If we check the plot above, we can see there is no presence of a funnel shape. It means that heteroscedacity is not present.
+
+
+
+### Linearity
+
+
+
+```{r message=F,warning=F}
+#linearity check
+
+data.frame(prediction=model_filter2$fitted.values,
+     error=model_filter2$residuals) %>% 
+  ggplot(aes(prediction,error)) +
+  geom_hline(yintercept=0) +
+  geom_point() +
+  geom_smooth() +
+  theme_bw()
+  
+```
+
+From plot above, There is little to no discernible pattern in our residual plot, we can conclude that our model is linear.
+  
+
+
+# Conclusion
+
+Variables that are useful to describe the variances in car prices are present prices, kms_driven, fuel type, seller type, and transmission. Our final model has satisfied the classical assumptions. The R-squared of the model is high, with 97,86% of the variables can explain the variances in the car price. The accuracy of the model in predicting the car price is measured with RMSE, with model has RMSE of 0.798 and prediction data has RMSE of 0.818, suggesting that our model may fit the prediction dataset.
+
+We have already learn how to build a linear regression model and what need to be concerned when building the model.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
